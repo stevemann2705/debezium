@@ -9,16 +9,16 @@ package io.debezium.connector.mysql;
 import static io.debezium.config.CommonConnectorConfig.DATABASE_CONFIG_PREFIX;
 import static io.debezium.config.CommonConnectorConfig.DRIVER_CONFIG_PREFIX;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.OptionalLong;
+import java.util.*;
 
+import com.jcraft.jsch.JSch;
+import com.jcraft.jsch.Session;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -489,13 +489,16 @@ public class MySqlConnection extends JdbcConnection {
         private final ConnectionFactory factory;
         private final Configuration config;
 
+        private final Configuration tunneledConfig;
+
         public MySqlConnectionConfiguration(Configuration config) {
             // Set up the JDBC connection without actually connecting, with extra MySQL-specific properties
             // to give us better JDBC database metadata behavior, including using UTF-8 for the client-side character encoding
             // per https://dev.mysql.com/doc/connector-j/5.1/en/connector-j-reference-charsets.html
             this.config = config;
+            this.tunneledConfig = Configuration.from(connectViaSSH(config.asProperties()));
             final boolean useSSL = sslModeEnabled();
-            final Configuration dbConfig = config
+            final Configuration dbConfig = tunneledConfig
                     .edit()
                     .withDefault(MySqlConnectorConfig.PORT, MySqlConnectorConfig.PORT.defaultValue())
                     .build()
@@ -555,6 +558,10 @@ public class MySqlConnection extends JdbcConnection {
             return config;
         }
 
+        public Configuration getTunneledConfig() {
+            return tunneledConfig;
+        }
+
         public ConnectionFactory factory() {
             return factory;
         }
@@ -568,11 +575,11 @@ public class MySqlConnection extends JdbcConnection {
         }
 
         public String hostname() {
-            return config.getString(MySqlConnectorConfig.HOSTNAME);
+            return tunneledConfig.getString(MySqlConnectorConfig.HOSTNAME);
         }
 
         public int port() {
-            return config.getInteger(MySqlConnectorConfig.PORT);
+            return tunneledConfig.getInteger(MySqlConnectorConfig.PORT);
         }
 
         public SecureConnectionMode sslMode() {
@@ -617,6 +624,81 @@ public class MySqlConnection extends JdbcConnection {
         public EventProcessingFailureHandlingMode inconsistentSchemaHandlingMode() {
             String mode = config.getString(MySqlConnectorConfig.INCONSISTENT_SCHEMA_HANDLING_MODE);
             return EventProcessingFailureHandlingMode.parse(mode);
+        }
+
+        /**
+         * Create a SSH connection with the Host using the key from Bucket
+         *
+         * @param props
+         * @return props
+         */
+        public Properties connectViaSSH(Properties props) {
+            if (props.getProperty(MySqlConnectorConfig.SSH_HOSTNAME.name()) != null) {
+                LOGGER.info("Starting configureSsh");
+
+                LOGGER.info("Properties got: {}", props);
+                try {
+                    JSch jSch = new JSch();
+
+                    Properties config = new Properties();
+                    config.put("StrictHostKeyChecking", "no");
+
+                    if (Objects.isNull(props.getProperty(MySqlConnectorConfig.SSH_PASSWORD.name()))) {
+                        if (props.containsKey(MySqlConnectorConfig.SSH_PRIVATE_KEY.name())) {
+                            jSch.addIdentity(
+                                props.getProperty(MySqlConnectorConfig.HOSTNAME.name()),
+                                props.getProperty(MySqlConnectorConfig.SSH_PRIVATE_KEY.name()).getBytes(),
+                                props.getProperty(MySqlConnectorConfig.SSH_PUBLIC_KEY.name(), "").getBytes(),
+                                props.getProperty(MySqlConnectorConfig.SSH_PASSPHRASE.name(), "").getBytes());
+                        }
+                    }
+
+                    String hostIP = props.getProperty(MySqlConnectorConfig.HOSTNAME.name());
+                    String hostPort = props.getProperty(MySqlConnectorConfig.PORT.name());
+
+                    int lport = getLocalTunnelport();
+
+                    Session session =
+                        jSch.getSession(
+                            props.getProperty(MySqlConnectorConfig.SSH_USER.name()),
+                            props.getProperty(MySqlConnectorConfig.SSH_HOSTNAME.name()),
+                            Integer.parseInt(props.getProperty(MySqlConnectorConfig.SSH_PORT.name())));
+
+                    if (Objects.nonNull(props.getProperty(MySqlConnectorConfig.SSH_PASSWORD.name()))) {
+                        session.setPassword(props.getProperty(MySqlConnectorConfig.SSH_PASSWORD.name()));
+                    }
+
+                    session.setPortForwardingL(lport, hostIP,
+                        Integer.parseInt(hostPort));
+                    session.setConfig(config);
+                    session.connect();
+
+                    props.setProperty(MySqlConnectorConfig.HOSTNAME.name(), "127.0.0.1");
+                    props.setProperty(MySqlConnectorConfig.PORT.name(), String.valueOf(lport));
+                } catch (Exception e) {
+                    LOGGER.error("Error in connectViaSSH", e);
+                    // TODO
+                }
+
+                LOGGER.info("Returning properties: {}", props);
+            }
+            return props;
+        }
+
+        /**
+         * Get the available Port in Local machine
+         *
+         * @return
+         */
+        private static int getLocalTunnelport() throws IOException {
+            try (ServerSocket socket = new ServerSocket()) {
+                InetSocketAddress randomSocketAddressFirst = new InetSocketAddress(0);
+                socket.bind(randomSocketAddressFirst);
+                return socket.getLocalPort();
+            } catch (IOException e) {
+                LOGGER.error("Error in getLocalTunnelport", e);
+                throw e;
+            }
         }
     }
 

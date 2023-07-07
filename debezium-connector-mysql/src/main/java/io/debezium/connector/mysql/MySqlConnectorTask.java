@@ -68,8 +68,8 @@ public class MySqlConnectorTask extends BaseSourceTask<MySqlPartition, MySqlOffs
     @Override
     public ChangeEventSourceCoordinator<MySqlPartition, MySqlOffsetContext> start(Configuration configuration) {
         final Clock clock = Clock.system();
-        final MySqlConnectorConfig connectorConfig = new MySqlConnectorConfig(configuration);
-        final TopicNamingStrategy<TableId> topicNamingStrategy = connectorConfig.getTopicNamingStrategy(MySqlConnectorConfig.TOPIC_NAMING_STRATEGY);
+        MySqlConnectionConfiguration mySqlConnectionConfiguration = new MySqlConnectionConfiguration(configuration);
+        final MySqlConnectorConfig connectorConfig = new MySqlConnectorConfig(mySqlConnectionConfiguration.getTunneledConfig());        final TopicNamingStrategy<TableId> topicNamingStrategy = connectorConfig.getTopicNamingStrategy(MySqlConnectorConfig.TOPIC_NAMING_STRATEGY);
         final SchemaNameAdjuster schemaNameAdjuster = connectorConfig.schemaNameAdjuster();
         final MySqlValueConverters valueConverters = getValueConverters(connectorConfig);
 
