@@ -12,13 +12,9 @@ import static io.debezium.config.CommonConnectorConfig.DRIVER_CONFIG_PREFIX;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.OptionalLong;
+import java.util.*;
 
+import io.debezium.util.SSHUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -489,13 +485,16 @@ public class MySqlConnection extends JdbcConnection {
         private final ConnectionFactory factory;
         private final Configuration config;
 
+        private final Configuration tunneledConfig;
+
         public MySqlConnectionConfiguration(Configuration config) {
             // Set up the JDBC connection without actually connecting, with extra MySQL-specific properties
             // to give us better JDBC database metadata behavior, including using UTF-8 for the client-side character encoding
             // per https://dev.mysql.com/doc/connector-j/5.1/en/connector-j-reference-charsets.html
             this.config = config;
+            this.tunneledConfig = Configuration.from(SSHUtil.connectViaSSH(config.asProperties()));
             final boolean useSSL = sslModeEnabled();
-            final Configuration dbConfig = config
+            final Configuration dbConfig = tunneledConfig
                     .edit()
                     .withDefault(MySqlConnectorConfig.PORT, MySqlConnectorConfig.PORT.defaultValue())
                     .build()
@@ -555,6 +554,10 @@ public class MySqlConnection extends JdbcConnection {
             return config;
         }
 
+        public Configuration getTunneledConfig() {
+            return tunneledConfig;
+        }
+
         public ConnectionFactory factory() {
             return factory;
         }
@@ -568,11 +571,11 @@ public class MySqlConnection extends JdbcConnection {
         }
 
         public String hostname() {
-            return config.getString(MySqlConnectorConfig.HOSTNAME);
+            return tunneledConfig.getString(MySqlConnectorConfig.HOSTNAME);
         }
 
         public int port() {
-            return config.getInteger(MySqlConnectorConfig.PORT);
+            return tunneledConfig.getInteger(MySqlConnectorConfig.PORT);
         }
 
         public SecureConnectionMode sslMode() {
@@ -618,6 +621,8 @@ public class MySqlConnection extends JdbcConnection {
             String mode = config.getString(MySqlConnectorConfig.INCONSISTENT_SCHEMA_HANDLING_MODE);
             return EventProcessingFailureHandlingMode.parse(mode);
         }
+
+
     }
 
     @Override

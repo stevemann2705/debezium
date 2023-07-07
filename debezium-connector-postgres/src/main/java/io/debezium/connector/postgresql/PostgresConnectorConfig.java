@@ -7,11 +7,9 @@
 package io.debezium.connector.postgresql;
 
 import java.time.Duration;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
+import io.debezium.util.SSHUtil;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigDef.Importance;
 import org.apache.kafka.common.config.ConfigDef.Type;
@@ -903,6 +901,8 @@ public class PostgresConnectorConfig extends RelationalDatabaseConnectorConfig {
     private final boolean flushLsnOnSource;
     private final ReplicaIdentityMapper replicaIdentityMapper;
 
+    private final Configuration tunneledConfig;
+
     public PostgresConnectorConfig(Configuration config) {
         super(
                 config,
@@ -911,7 +911,7 @@ public class PostgresConnectorConfig extends RelationalDatabaseConnectorConfig {
                 DEFAULT_SNAPSHOT_FETCH_SIZE,
                 ColumnFilterMode.SCHEMA,
                 false);
-
+        this.tunneledConfig = Configuration.from(SSHUtil.connectViaSSH(config.asProperties()));
         this.logicalDecodingMessageFilter = new LogicalDecodingMessageFilter(config.getString(LOGICAL_DECODING_MESSAGE_PREFIX_INCLUDE_LIST),
                 config.getString(LOGICAL_DECODING_MESSAGE_PREFIX_EXCLUDE_LIST));
         String hstoreHandlingModeStr = config.getString(PostgresConnectorConfig.HSTORE_HANDLING_MODE);
@@ -924,12 +924,21 @@ public class PostgresConnectorConfig extends RelationalDatabaseConnectorConfig {
         this.replicaIdentityMapper = (replicaIdentityMapping != null) ? new ReplicaIdentityMapper(replicaIdentityMapping) : null;
     }
 
+    public Configuration getTunneledConfig() {
+        return tunneledConfig;
+    }
+
     protected String hostname() {
-        return getConfig().getString(HOSTNAME);
+        return tunneledConfig.getString(HOSTNAME);
     }
 
     protected int port() {
-        return getConfig().getInteger(PORT);
+        return tunneledConfig.getInteger(PORT);
+    }
+
+    public JdbcConfiguration getJdbcConfig() {
+        return JdbcConfiguration.adapt(
+            tunneledConfig.subset(DATABASE_CONFIG_PREFIX, true).merge(tunneledConfig.subset(DRIVER_CONFIG_PREFIX, true)));
     }
 
     public String databaseName() {
@@ -1042,6 +1051,13 @@ public class PostgresConnectorConfig extends RelationalDatabaseConnectorConfig {
                     PORT,
                     USER,
                     PASSWORD,
+                    SSH_HOSTNAME,
+                    SSH_PORT,
+                    SSH_USER,
+                    SSH_PASSWORD,
+                    SSH_PRIVATE_KEY,
+                    SSH_PUBLIC_KEY,
+                    SSH_PASSPHRASE,
                     DATABASE_NAME,
                     PLUGIN_NAME,
                     SLOT_NAME,
