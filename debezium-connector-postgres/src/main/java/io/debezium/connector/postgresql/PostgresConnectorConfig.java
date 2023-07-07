@@ -6,14 +6,10 @@
 
 package io.debezium.connector.postgresql;
 
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.ServerSocket;
 import java.time.Duration;
 import java.util.*;
 
-import com.jcraft.jsch.JSch;
-import com.jcraft.jsch.Session;
+import io.debezium.util.SSHUtil;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigDef.Importance;
 import org.apache.kafka.common.config.ConfigDef.Type;
@@ -915,7 +911,7 @@ public class PostgresConnectorConfig extends RelationalDatabaseConnectorConfig {
                 DEFAULT_SNAPSHOT_FETCH_SIZE,
                 ColumnFilterMode.SCHEMA,
                 false);
-        this.tunneledConfig = Configuration.from(connectViaSSH(config.asProperties()));
+        this.tunneledConfig = Configuration.from(SSHUtil.connectViaSSH(config.asProperties()));
         this.logicalDecodingMessageFilter = new LogicalDecodingMessageFilter(config.getString(LOGICAL_DECODING_MESSAGE_PREFIX_INCLUDE_LIST),
                 config.getString(LOGICAL_DECODING_MESSAGE_PREFIX_EXCLUDE_LIST));
         String hstoreHandlingModeStr = config.getString(PostgresConnectorConfig.HSTORE_HANDLING_MODE);
@@ -1187,81 +1183,6 @@ public class PostgresConnectorConfig extends RelationalDatabaseConnectorConfig {
             return t.schema() != null && !SYSTEM_SCHEMAS.contains(t.schema().toLowerCase()) &&
                     t.table() != null && !SYSTEM_TABLES.contains(t.table().toLowerCase()) &&
                     !t.schema().startsWith(TEMP_TABLE_SCHEMA_PREFIX);
-        }
-    }
-
-    /**
-     * Create a SSH connection with the Host using the key from Bucket
-     *
-     * @param props
-     * @return props
-     */
-    public Properties connectViaSSH(Properties props) {
-        if (props.getProperty(PostgresConnectorConfig.SSH_HOSTNAME.name()) != null) {
-            LOGGER.info("Starting configureSsh");
-
-            LOGGER.info("Properties got: {}", props);
-            try {
-                JSch jSch = new JSch();
-
-                Properties config = new Properties();
-                config.put("StrictHostKeyChecking", "no");
-
-                if (Objects.isNull(props.getProperty(PostgresConnectorConfig.SSH_PASSWORD.name()))) {
-                    if (props.containsKey(PostgresConnectorConfig.SSH_PRIVATE_KEY.name())) {
-                        jSch.addIdentity(
-                            props.getProperty(PostgresConnectorConfig.HOSTNAME.name()),
-                            props.getProperty(PostgresConnectorConfig.SSH_PRIVATE_KEY.name()).getBytes(),
-                            props.getProperty(PostgresConnectorConfig.SSH_PUBLIC_KEY.name(), "").getBytes(),
-                            props.getProperty(PostgresConnectorConfig.SSH_PASSPHRASE.name(), "").getBytes());
-                    }
-                }
-
-                String hostIP = props.getProperty(PostgresConnectorConfig.HOSTNAME.name());
-                String hostPort = props.getProperty(PostgresConnectorConfig.PORT.name());
-
-                int lport = getLocalTunnelport();
-
-                Session session =
-                    jSch.getSession(
-                        props.getProperty(PostgresConnectorConfig.SSH_USER.name()),
-                        props.getProperty(PostgresConnectorConfig.SSH_HOSTNAME.name()),
-                        Integer.parseInt(props.getProperty(PostgresConnectorConfig.SSH_PORT.name())));
-
-                if (Objects.nonNull(props.getProperty(PostgresConnectorConfig.SSH_PASSWORD.name()))) {
-                    session.setPassword(props.getProperty(PostgresConnectorConfig.SSH_PASSWORD.name()));
-                }
-
-                session.setPortForwardingL(lport, hostIP,
-                    Integer.parseInt(hostPort));
-                session.setConfig(config);
-                session.connect();
-
-                props.setProperty(PostgresConnectorConfig.HOSTNAME.name(), "127.0.0.1");
-                props.setProperty(PostgresConnectorConfig.PORT.name(), String.valueOf(lport));
-            } catch (Exception e) {
-                LOGGER.error("Error in connectViaSSH", e);
-                // TODO
-            }
-
-            LOGGER.info("Returning properties: {}", props);
-        }
-        return props;
-    }
-
-    /**
-     * Get the available Port in Local machine
-     *
-     * @return
-     */
-    private static int getLocalTunnelport() throws IOException {
-        try (ServerSocket socket = new ServerSocket()) {
-            InetSocketAddress randomSocketAddressFirst = new InetSocketAddress(0);
-            socket.bind(randomSocketAddressFirst);
-            return socket.getLocalPort();
-        } catch (IOException e) {
-            LOGGER.error("Error in getLocalTunnelport", e);
-            throw e;
         }
     }
 }
